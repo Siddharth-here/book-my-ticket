@@ -1,6 +1,6 @@
-
+// src/controllers/auth.controller.js
 import bcrypt from "bcrypt";
-import { pool } from "../db/pool.js";
+import { users } from "../db/pool.js";
 import { signToken } from "../utils/jwt.js";
 
 export const register = async (req, res) => {
@@ -10,21 +10,26 @@ export const register = async (req, res) => {
       return res.status(400).json({ error: { message: "Name, email, and password are required" } });
     }
 
-    const existing = await pool.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase()]);
-    if (existing.rowCount > 0) {
+    const existingUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (existingUser) {
       return res.status(409).json({ error: { message: "Email is already registered" } });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const result = await pool.query(
-      "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id, name, email, created_at",
-      [name, email.toLowerCase(), hashedPassword]
-    );
+    const newUser = {
+      id: users.length + 1,
+      name,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      created_at: new Date().toISOString()
+    };
 
-    return res.status(201).json({ user: result.rows[0] });
+    users.push(newUser);
+
+    const { password: _, ...userWithoutPassword } = newUser;
+    return res.status(201).json({ user: userWithoutPassword });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: { message: "Internal Server Error" } });
+    return res.status(500).json({ error: { message: err.message || "Internal Server Error" } });
   }
 };
 
@@ -35,25 +40,24 @@ export const login = async (req, res) => {
       return res.status(400).json({ error: { message: "Email and password are required" } });
     }
 
-    const result = await pool.query("SELECT * FROM users WHERE email = $1", [email.toLowerCase()]);
-    if (result.rowCount === 0) {
+    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (!user) {
       return res.status(401).json({ error: { message: "Invalid credentials" } });
     }
 
-    const user = result.rows[0];
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ error: { message: "Invalid credentials" } });
     }
 
     const token = signToken({ userId: user.id, email: user.email, name: user.name });
+
     return res.status(200).json({
       token,
       user: { id: user.id, name: user.name, email: user.email }
     });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: { message: "Internal Server Error" } });
+    return res.status(500).json({ error: { message: err.message || "Internal Server Error" } });
   }
 };
 
